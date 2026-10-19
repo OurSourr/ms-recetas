@@ -9,6 +9,12 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
+/**
+ * Representa una receta de coctelería.
+ *
+ * Las recetas pueden mantenerse como borradores
+ * hasta cumplir las condiciones necesarias para publicarse.
+ */
 @Entity
 @Table(name = "receta")
 public class Receta {
@@ -36,7 +42,49 @@ public class Receta {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
+    /**
+     * Constructor requerido por JPA.
+     */
     protected Receta() {
-        // Constructor requerido por JPA.
     }
+
+    // Métodos de lectura
+
+    public Integer getIdReceta() {
+        return idReceta;
+    }
+
+    public String getTitulo() {
+        return titulo;
+    }
+
+    public String getDescripcion() {
+        return descripcion;
+    }
+
+    public boolean isPublicada() {
+        return publicada;
+    }
+
+    public boolean isActivo() {
+        return activo;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    /**
+ * Cambia el estado de la receta a publicada.
+ *
+ * Debe invocarse únicamente después de superar
+ * las validaciones de negocio.
+ */
+public void marcarComoPublicada() {
+    this.publicada = true;
+}
 }

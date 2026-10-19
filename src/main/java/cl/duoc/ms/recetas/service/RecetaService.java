@@ -16,4 +16,13 @@ public interface RecetaService {
      * @return lista de recetas publicadas y activas
      */
     List<Receta> listarRecetasPublicadas();
+
+    /**
+     * Publica una receta después de verificar
+     * las reglas de negocio correspondientes.
+     *
+     * @param idReceta identificador de la receta
+     * @return receta publicada
+     */
+    Receta publicarReceta(Integer idReceta);
 }

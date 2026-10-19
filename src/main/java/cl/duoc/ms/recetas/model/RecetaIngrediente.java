@@ -11,6 +11,12 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.MapsId;
 import jakarta.persistence.Table;
 
+/**
+ * Representa la asociación entre una receta y un ingrediente.
+ *
+ * Permite identificar ingredientes obligatorios y opcionales,
+ * sus cantidades y el orden de presentación.
+ */
 @Entity
 @Table(name = "receta_ingrediente")
 public class RecetaIngrediente {
@@ -40,7 +46,39 @@ public class RecetaIngrediente {
     @Column(name = "orden", nullable = false)
     private Integer orden = 1;
 
+    /**
+     * Constructor requerido por JPA.
+     */
     protected RecetaIngrediente() {
-        // Constructor requerido por JPA.
+    }
+
+    // Métodos de lectura
+
+    public RecetaIngredienteId getId() {
+        return id;
+    }
+
+    public Receta getReceta() {
+        return receta;
+    }
+
+    public Ingrediente getIngrediente() {
+        return ingrediente;
+    }
+
+    public BigDecimal getCantidad() {
+        return cantidad;
+    }
+
+    public String getUnidad() {
+        return unidad;
+    }
+
+    public boolean isObligatorio() {
+        return obligatorio;
+    }
+
+    public Integer getOrden() {
+        return orden;
     }
 }
