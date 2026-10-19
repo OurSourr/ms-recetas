@@ -1,8 +1,13 @@
+
 package cl.duoc.ms.recetas.integration;
+
+import java.net.http.HttpClient;
+import java.time.Duration;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -17,19 +22,86 @@ public class CatalogoProductoHttpClient implements CatalogoProductoService {
 
     private final RestClient restClient;
 
+    /**
+     * Constructor utilizado por Spring en producción.
+     * Configura los tiempos máximos de conexión y respuesta.
+     */
     @Autowired
     public CatalogoProductoHttpClient(
             RestClient.Builder restClientBuilder,
-            @Value("${catalogo.base-url}") String catalogoBaseUrl) {
+            @Value("${catalogo.base-url}") String catalogoBaseUrl,
+            @Value("${catalogo.connect-timeout}") Duration connectTimeout,
+            @Value("${catalogo.read-timeout}") Duration readTimeout) {
+
+        validarConfiguracion(
+                catalogoBaseUrl,
+                connectTimeout,
+                readTimeout);
+
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(connectTimeout)
+                .build();
+
+        JdkClientHttpRequestFactory requestFactory =
+                new JdkClientHttpRequestFactory(httpClient);
+
+        requestFactory.setReadTimeout(readTimeout);
+
+        this.restClient = restClientBuilder
+                .baseUrl(catalogoBaseUrl)
+                .requestFactory(requestFactory)
+                .build();
+    }
+
+    /**
+     * Constructor alternativo para pruebas con un cliente HTTP simulado.
+     * No reemplaza la fábrica HTTP configurada en el builder.
+     */
+    public CatalogoProductoHttpClient(
+            RestClient.Builder restClientBuilder,
+            String catalogoBaseUrl,
+            Duration connectTimeout,
+            Duration readTimeout,
+            boolean usarClienteSimulado) {
+
+        validarConfiguracion(
+                catalogoBaseUrl,
+                connectTimeout,
+                readTimeout);
+
+        if (!usarClienteSimulado) {
+            throw new IllegalArgumentException(
+                    "Este constructor está reservado para clientes simulados.");
+        }
+
+        this.restClient = restClientBuilder
+                .baseUrl(catalogoBaseUrl)
+                .build();
+    }
+
+    private static void validarConfiguracion(
+            String catalogoBaseUrl,
+            Duration connectTimeout,
+            Duration readTimeout) {
 
         if (catalogoBaseUrl == null || catalogoBaseUrl.isBlank()) {
             throw new IllegalArgumentException(
                     "La URL del microservicio Catálogo es obligatoria.");
         }
 
-        this.restClient = restClientBuilder
-                .baseUrl(catalogoBaseUrl)
-                .build();
+        if (connectTimeout == null
+                || connectTimeout.isZero()
+                || connectTimeout.isNegative()) {
+            throw new IllegalArgumentException(
+                    "El tiempo de conexión debe ser positivo.");
+        }
+
+        if (readTimeout == null
+                || readTimeout.isZero()
+                || readTimeout.isNegative()) {
+            throw new IllegalArgumentException(
+                    "El tiempo de respuesta debe ser positivo.");
+        }
     }
 
     @Override
@@ -47,7 +119,6 @@ public class CatalogoProductoHttpClient implements CatalogoProductoService {
                     .onStatus(
                             estado -> estado.value() == 404,
                             (solicitud, respuesta) -> {
-                                // Un producto inexistente no cumple la regla.
                                 throw new ProductoNoEncontradoException();
                             })
                     .onStatus(
@@ -80,17 +151,11 @@ public class CatalogoProductoHttpClient implements CatalogoProductoService {
         }
     }
 
-    /**
-     * Representa únicamente los campos necesarios de la respuesta.
-     */
     private record ProductoCatalogoResponse(
             Integer idProducto,
             Boolean activo) {
     }
 
-    /**
-     * Distingue un producto inexistente de un fallo de comunicación.
-     */
     private static class ProductoNoEncontradoException
             extends RuntimeException {
 

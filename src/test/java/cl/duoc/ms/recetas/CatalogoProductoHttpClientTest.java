@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,27 +22,45 @@ import org.springframework.web.client.RestClient;
 import cl.duoc.ms.recetas.integration.CatalogoProductoHttpClient;
 
 /**
- * Pruebas del cliente HTTP sin iniciar el microservicio Catálogo.
+ * Pruebas unitarias del cliente HTTP de Catálogo.
+ *
+ * Las respuestas HTTP se simulan para evitar dependencias
+ * del microservicio Catálogo durante las pruebas.
  */
 class CatalogoProductoHttpClientTest {
+
+    private static final String CATALOGO_BASE_URL =
+            "http://localhost:8081";
+
+    private static final Duration CONNECT_TIMEOUT =
+            Duration.ofSeconds(3);
+
+    private static final Duration READ_TIMEOUT =
+            Duration.ofSeconds(5);
 
     private ClienteHttpSimulado clienteHttp;
     private CatalogoProductoHttpClient catalogoClient;
 
     @BeforeEach
     void configurar() {
+
         clienteHttp = new ClienteHttpSimulado();
 
         RestClient.Builder builder = RestClient.builder()
                 .requestFactory(clienteHttp);
 
+        // Conserva la fábrica HTTP simulada.
         catalogoClient = new CatalogoProductoHttpClient(
                 builder,
-                "http://localhost:8081");
+                CATALOGO_BASE_URL,
+                CONNECT_TIMEOUT,
+                READ_TIMEOUT,
+                true);
     }
 
     @Test
     void debeReconocerProductoActivo() {
+
         clienteHttp.responder(
                 HttpStatus.OK,
                 """
@@ -53,6 +72,7 @@ class CatalogoProductoHttpClientTest {
 
     @Test
     void debeRechazarProductoInactivo() {
+
         clienteHttp.responder(
                 HttpStatus.OK,
                 """
@@ -64,6 +84,7 @@ class CatalogoProductoHttpClientTest {
 
     @Test
     void debeRechazarProductoInexistente() {
+
         clienteHttp.responder(
                 HttpStatus.NOT_FOUND,
                 """
@@ -75,6 +96,7 @@ class CatalogoProductoHttpClientTest {
 
     @Test
     void debeRechazarRespuestaConIdentificadorDistinto() {
+
         clienteHttp.responder(
                 HttpStatus.OK,
                 """
@@ -88,6 +110,7 @@ class CatalogoProductoHttpClientTest {
 
     @Test
     void debeRechazarRespuestaSinEstadoActivo() {
+
         clienteHttp.responder(
                 HttpStatus.OK,
                 """
@@ -101,6 +124,7 @@ class CatalogoProductoHttpClientTest {
 
     @Test
     void debePropagarErrorDeCatalogo() {
+
         clienteHttp.responder(
                 HttpStatus.INTERNAL_SERVER_ERROR,
                 """
@@ -114,13 +138,41 @@ class CatalogoProductoHttpClientTest {
 
     @Test
     void debeRechazarIdentificadorInvalido() {
+
         assertThrows(
                 IllegalArgumentException.class,
                 () -> catalogoClient.existeProductoActivo(0));
     }
 
+    @Test
+    void debeRechazarTimeoutDeConexionInvalido() {
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new CatalogoProductoHttpClient(
+                        RestClient.builder(),
+                        CATALOGO_BASE_URL,
+                        Duration.ZERO,
+                        READ_TIMEOUT));
+    }
+
+    @Test
+    void debeRechazarTimeoutDeRespuestaInvalido() {
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new CatalogoProductoHttpClient(
+                        RestClient.builder(),
+                        CATALOGO_BASE_URL,
+                        CONNECT_TIMEOUT,
+                        Duration.ZERO));
+    }
+
     /**
-     * Simula respuestas HTTP de forma controlada.
+     * Fábrica HTTP simulada.
+     *
+     * Permite configurar el estado y contenido de las respuestas
+     * sin realizar solicitudes de red.
      */
     private static class ClienteHttpSimulado
             implements ClientHttpRequestFactory {
@@ -129,6 +181,7 @@ class CatalogoProductoHttpClientTest {
         private String contenido;
 
         void responder(HttpStatus estado, String contenido) {
+
             this.estado = estado;
             this.contenido = contenido;
         }
@@ -152,7 +205,8 @@ class CatalogoProductoHttpClientTest {
 
                     MockClientHttpResponse respuesta =
                             new MockClientHttpResponse(
-                                    contenido.getBytes(StandardCharsets.UTF_8),
+                                    contenido.getBytes(
+                                            StandardCharsets.UTF_8),
                                     estado);
 
                     respuesta.getHeaders().set(
