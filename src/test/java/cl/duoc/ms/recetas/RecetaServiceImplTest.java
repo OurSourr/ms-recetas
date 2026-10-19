@@ -10,11 +10,14 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import cl.duoc.ms.recetas.dto.RecetaDetalleResponse;
+import cl.duoc.ms.recetas.model.PasoReceta;
 import cl.duoc.ms.recetas.model.Receta;
 import cl.duoc.ms.recetas.model.RecetaIngrediente;
 import cl.duoc.ms.recetas.model.RecetaIngredienteId;
 import cl.duoc.ms.recetas.model.RecetaProducto;
 import cl.duoc.ms.recetas.model.RecetaProductoId;
+import cl.duoc.ms.recetas.repository.PasoRecetaRepository;
 import cl.duoc.ms.recetas.repository.RecetaIngredienteRepository;
 import cl.duoc.ms.recetas.repository.RecetaProductoRepository;
 import cl.duoc.ms.recetas.repository.RecetaRepository;
@@ -33,6 +36,7 @@ class RecetaServiceImplTest {
     private RecetaRepository recetaRepository;
     private RecetaIngredienteRepository recetaIngredienteRepository;
     private RecetaProductoRepository recetaProductoRepository;
+    private PasoRecetaRepository pasoRecetaRepository;
     private CatalogoProductoService catalogoProductoService;
     private RecetaValidator recetaValidator;
     private RecetaServiceImpl recetaService;
@@ -43,6 +47,7 @@ class RecetaServiceImplTest {
         recetaRepository = mock(RecetaRepository.class);
         recetaIngredienteRepository = mock(RecetaIngredienteRepository.class);
         recetaProductoRepository = mock(RecetaProductoRepository.class);
+        pasoRecetaRepository = mock(PasoRecetaRepository.class);
         catalogoProductoService = mock(CatalogoProductoService.class);
 
         recetaValidator = new RecetaValidator();
@@ -51,6 +56,7 @@ class RecetaServiceImplTest {
                 recetaRepository,
                 recetaIngredienteRepository,
                 recetaProductoRepository,
+                pasoRecetaRepository,
                 recetaValidator,
                 catalogoProductoService);
     }
@@ -439,7 +445,6 @@ class RecetaServiceImplTest {
 
         List<Integer> ids = List.of(1, 2);
 
-        // Los mocks se crean antes de configurar los repositorios.
         RecetaIngrediente ingredientePrimera =
                 crearIngrediente(1, 101, true);
 
@@ -477,6 +482,281 @@ class RecetaServiceImplTest {
 
         verify(catalogoProductoService, times(1))
                 .existeProductoActivo(10);
+    }
+
+    // =========================================================
+    // PRUEBAS DE CONSULTA PÚBLICA POR IDENTIFICADOR
+    // =========================================================
+
+    @Test
+    void debeObtenerRecetaPublicadaValidaPorId() {
+
+        Receta receta = prepararRecetaValidaParaDetalle(1, 10);
+
+        when(catalogoProductoService.existeProductoActivo(10))
+                .thenReturn(true);
+
+        Optional<Receta> resultado =
+                recetaService.obtenerRecetaPublicadaPorId(1);
+
+        assertTrue(resultado.isPresent());
+        assertSame(receta, resultado.orElseThrow());
+
+        verify(catalogoProductoService).existeProductoActivo(10);
+        verify(recetaRepository, never()).save(any());
+    }
+
+    @Test
+    void debeRechazarIdentificadorNuloEnDetalle() {
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> recetaService.obtenerRecetaPublicadaPorId(null));
+
+        verifyNoInteractions(
+                recetaRepository,
+                recetaIngredienteRepository,
+                recetaProductoRepository,
+                catalogoProductoService);
+    }
+
+    @Test
+    void debeRechazarIdentificadorNoPositivoEnDetalle() {
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> recetaService.obtenerRecetaPublicadaPorId(0));
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> recetaService.obtenerRecetaPublicadaPorId(-1));
+
+        verifyNoInteractions(
+                recetaRepository,
+                recetaIngredienteRepository,
+                recetaProductoRepository,
+                catalogoProductoService);
+    }
+
+    @Test
+    void debeRetornarVacioCuandoRecetaNoExiste() {
+
+        when(recetaRepository.findById(99))
+                .thenReturn(Optional.empty());
+
+        Optional<Receta> resultado =
+                recetaService.obtenerRecetaPublicadaPorId(99);
+
+        assertTrue(resultado.isEmpty());
+
+        verifyNoInteractions(
+                recetaIngredienteRepository,
+                recetaProductoRepository,
+                catalogoProductoService);
+    }
+
+    @Test
+    void debeExcluirBorradorDeConsultaPorId() {
+
+        Receta receta = mock(Receta.class);
+
+        when(recetaRepository.findById(1))
+                .thenReturn(Optional.of(receta));
+
+        when(receta.isActivo()).thenReturn(true);
+        when(receta.isPublicada()).thenReturn(false);
+
+        Optional<Receta> resultado =
+                recetaService.obtenerRecetaPublicadaPorId(1);
+
+        assertTrue(resultado.isEmpty());
+
+        verifyNoInteractions(
+                recetaIngredienteRepository,
+                recetaProductoRepository,
+                catalogoProductoService);
+    }
+
+    @Test
+    void debeExcluirRecetaInactivaDeConsultaPorId() {
+
+        Receta receta = mock(Receta.class);
+
+        when(recetaRepository.findById(1))
+                .thenReturn(Optional.of(receta));
+
+        when(receta.isActivo()).thenReturn(false);
+
+        Optional<Receta> resultado =
+                recetaService.obtenerRecetaPublicadaPorId(1);
+
+        assertTrue(resultado.isEmpty());
+
+        verifyNoInteractions(
+                recetaIngredienteRepository,
+                recetaProductoRepository,
+                catalogoProductoService);
+    }
+
+    @Test
+    void debeExcluirRecetaSinIngredientesObligatoriosPorId() {
+
+        prepararRecetaValidaParaDetalle(1, 10);
+
+        RecetaIngrediente ingredienteOpcional =
+                crearIngrediente(1, 100, false);
+
+        when(recetaIngredienteRepository
+                .findByReceta_IdRecetaOrderByOrdenAsc(1))
+                .thenReturn(List.of(ingredienteOpcional));
+
+        Optional<Receta> resultado =
+                recetaService.obtenerRecetaPublicadaPorId(1);
+
+        assertTrue(resultado.isEmpty());
+
+        verifyNoInteractions(
+                recetaProductoRepository,
+                catalogoProductoService);
+    }
+
+    @Test
+    void debeExcluirRecetaSinProductosAsociadosPorId() {
+
+        prepararRecetaValidaParaDetalle(1, 10);
+
+        when(recetaProductoRepository.findByReceta_IdReceta(1))
+                .thenReturn(List.of());
+
+        Optional<Receta> resultado =
+                recetaService.obtenerRecetaPublicadaPorId(1);
+
+        assertTrue(resultado.isEmpty());
+
+        verifyNoInteractions(catalogoProductoService);
+    }
+
+    @Test
+    void debeExcluirRecetaConProductoInactivoPorId() {
+
+        prepararRecetaValidaParaDetalle(1, 10);
+
+        when(catalogoProductoService.existeProductoActivo(10))
+                .thenReturn(false);
+
+        Optional<Receta> resultado =
+                recetaService.obtenerRecetaPublicadaPorId(1);
+
+        assertTrue(resultado.isEmpty());
+
+        verify(catalogoProductoService).existeProductoActivo(10);
+    }
+
+    @Test
+    void debeExcluirRecetaPorIdCuandoCatalogoNoResponde() {
+
+        prepararRecetaValidaParaDetalle(1, 10);
+
+        when(catalogoProductoService.existeProductoActivo(10))
+                .thenThrow(new IllegalStateException(
+                        "Catálogo no disponible."));
+
+        Optional<Receta> resultado =
+                recetaService.obtenerRecetaPublicadaPorId(1);
+
+        assertTrue(resultado.isEmpty());
+
+        verify(recetaRepository, never()).save(any());
+    }
+
+    // =========================================================
+    // PRUEBAS DEL DETALLE PÚBLICO CON PASOS
+    // =========================================================
+
+    @Test
+    void debeObtenerDetalleConPasosOrdenados() {
+
+        Receta receta = prepararRecetaValidaParaDetalle(1, 10);
+
+        PasoReceta primerPaso = mock(PasoReceta.class);
+        PasoReceta segundoPaso = mock(PasoReceta.class);
+
+        when(receta.getTitulo()).thenReturn("Gin Sour");
+        when(receta.getDescripcion()).thenReturn("Cóctel con gin.");
+
+        when(primerPaso.getNumeroPaso()).thenReturn(1);
+        when(primerPaso.getInstruccion())
+                .thenReturn("Agregar hielo.");
+
+        when(segundoPaso.getNumeroPaso()).thenReturn(2);
+        when(segundoPaso.getInstruccion())
+                .thenReturn("Mezclar ingredientes.");
+
+        when(catalogoProductoService.existeProductoActivo(10))
+                .thenReturn(true);
+
+        when(pasoRecetaRepository
+                .findByReceta_IdRecetaOrderByNumeroPasoAsc(1))
+                .thenReturn(List.of(primerPaso, segundoPaso));
+
+        Optional<RecetaDetalleResponse> resultado =
+                recetaService.obtenerDetalleRecetaPublicada(1);
+
+        assertTrue(resultado.isPresent());
+
+        RecetaDetalleResponse detalle = resultado.orElseThrow();
+
+        assertEquals(1, detalle.idReceta());
+        assertEquals("Gin Sour", detalle.titulo());
+        assertEquals("Cóctel con gin.", detalle.descripcion());
+
+        assertEquals(2, detalle.pasos().size());
+
+        assertEquals(1, detalle.pasos().get(0).numeroPaso());
+        assertEquals(
+                "Agregar hielo.",
+                detalle.pasos().get(0).instruccion());
+
+        assertEquals(2, detalle.pasos().get(1).numeroPaso());
+        assertEquals(
+                "Mezclar ingredientes.",
+                detalle.pasos().get(1).instruccion());
+
+        verify(pasoRecetaRepository)
+                .findByReceta_IdRecetaOrderByNumeroPasoAsc(1);
+
+        verify(recetaRepository, never()).save(any());
+    }
+
+    /**
+     * Una receta en borrador no debe exponer instrucciones.
+     * Tampoco debe consultarse el repositorio de pasos.
+     */
+    @Test
+    void noDebeConsultarPasosDeRecetaNoPublicada() {
+
+        Receta receta = mock(Receta.class);
+
+        when(recetaRepository.findById(1))
+                .thenReturn(Optional.of(receta));
+
+        when(receta.isActivo()).thenReturn(true);
+        when(receta.isPublicada()).thenReturn(false);
+
+        Optional<RecetaDetalleResponse> resultado =
+                recetaService.obtenerDetalleRecetaPublicada(1);
+
+        assertTrue(resultado.isEmpty());
+
+        verify(recetaRepository).findById(1);
+        verifyNoInteractions(pasoRecetaRepository);
+
+        verifyNoInteractions(
+                recetaIngredienteRepository,
+                recetaProductoRepository,
+                catalogoProductoService);
+
+        verify(recetaRepository, never()).save(any());
     }
 
     // =========================================================
@@ -535,8 +815,8 @@ class RecetaServiceImplTest {
     /**
      * Prepara una receta para pruebas de consulta pública.
      *
-     * Evita crear mocks dentro de thenReturn(), ya que
-     * eso provoca UnfinishedStubbingException en Mockito.
+     * Los mocks se crean antes de configurar los repositorios
+     * para evitar UnfinishedStubbingException en Mockito.
      */
     private Receta prepararRecetaParaConsulta(
             Integer idReceta,
@@ -598,5 +878,40 @@ class RecetaServiceImplTest {
 
         when(recetaRepository.save(receta))
                 .thenReturn(receta);
+    }
+
+    /**
+     * Prepara una receta publicada y activa para las
+     * pruebas de consulta individual.
+     *
+     * Los mocks se crean antes de configurar repositorios.
+     */
+    private Receta prepararRecetaValidaParaDetalle(
+            Integer idReceta,
+            Integer idProducto) {
+
+        Receta receta = crearReceta(idReceta);
+
+        RecetaIngrediente ingrediente =
+                crearIngrediente(idReceta, 100, true);
+
+        RecetaProducto producto =
+                crearProducto(idReceta, idProducto);
+
+        when(receta.isActivo()).thenReturn(true);
+        when(receta.isPublicada()).thenReturn(true);
+
+        when(recetaRepository.findById(idReceta))
+                .thenReturn(Optional.of(receta));
+
+        when(recetaIngredienteRepository
+                .findByReceta_IdRecetaOrderByOrdenAsc(idReceta))
+                .thenReturn(List.of(ingrediente));
+
+        when(recetaProductoRepository
+                .findByReceta_IdReceta(idReceta))
+                .thenReturn(List.of(producto));
+
+        return receta;
     }
 }

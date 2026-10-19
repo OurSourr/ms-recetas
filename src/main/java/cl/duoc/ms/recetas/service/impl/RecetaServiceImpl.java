@@ -5,6 +5,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -14,9 +16,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import cl.duoc.ms.recetas.dto.RecetaDetalleResponse;
+import cl.duoc.ms.recetas.dto.RecetaMapper;
+import cl.duoc.ms.recetas.model.PasoReceta;
 import cl.duoc.ms.recetas.model.Receta;
 import cl.duoc.ms.recetas.model.RecetaIngrediente;
 import cl.duoc.ms.recetas.model.RecetaProducto;
+import cl.duoc.ms.recetas.repository.PasoRecetaRepository;
 import cl.duoc.ms.recetas.repository.RecetaIngredienteRepository;
 import cl.duoc.ms.recetas.repository.RecetaProductoRepository;
 import cl.duoc.ms.recetas.repository.RecetaRepository;
@@ -26,6 +32,9 @@ import cl.duoc.ms.recetas.service.RecetaValidator;
 
 /**
  * Implementación de las operaciones de negocio para recetas.
+ *
+ * Las consultas públicas aplican las reglas de visibilidad
+ * antes de exponer información de las recetas.
  */
 @Service
 public class RecetaServiceImpl implements RecetaService {
@@ -36,29 +45,55 @@ public class RecetaServiceImpl implements RecetaService {
     private final RecetaRepository recetaRepository;
     private final RecetaIngredienteRepository recetaIngredienteRepository;
     private final RecetaProductoRepository recetaProductoRepository;
+    private final PasoRecetaRepository pasoRecetaRepository;
     private final RecetaValidator recetaValidator;
     private final CatalogoProductoService catalogoProductoService;
 
+    /**
+     * Constructor único utilizado por Spring y las pruebas.
+     *
+     * Todas las dependencias son obligatorias para garantizar
+     * que el servicio se construya completamente configurado.
+     */
     @Autowired
     public RecetaServiceImpl(
             RecetaRepository recetaRepository,
             RecetaIngredienteRepository recetaIngredienteRepository,
             RecetaProductoRepository recetaProductoRepository,
+            PasoRecetaRepository pasoRecetaRepository,
             RecetaValidator recetaValidator,
             CatalogoProductoService catalogoProductoService) {
 
-        this.recetaRepository = recetaRepository;
-        this.recetaIngredienteRepository = recetaIngredienteRepository;
-        this.recetaProductoRepository = recetaProductoRepository;
-        this.recetaValidator = recetaValidator;
-        this.catalogoProductoService = catalogoProductoService;
+        this.recetaRepository = Objects.requireNonNull(
+                recetaRepository,
+                "El repositorio de recetas es obligatorio.");
+
+        this.recetaIngredienteRepository = Objects.requireNonNull(
+                recetaIngredienteRepository,
+                "El repositorio de ingredientes es obligatorio.");
+
+        this.recetaProductoRepository = Objects.requireNonNull(
+                recetaProductoRepository,
+                "El repositorio de productos es obligatorio.");
+
+        this.pasoRecetaRepository = Objects.requireNonNull(
+                pasoRecetaRepository,
+                "El repositorio de pasos es obligatorio.");
+
+        this.recetaValidator = Objects.requireNonNull(
+                recetaValidator,
+                "El validador de recetas es obligatorio.");
+
+        this.catalogoProductoService = Objects.requireNonNull(
+                catalogoProductoService,
+                "El servicio de Catálogo es obligatorio.");
     }
 
     /**
      * Recupera recetas publicadas y activas.
      *
-     * Aplica RN-PROP-01 y exige al menos un producto activo
-     * en Catálogo antes de incluir una receta en la respuesta.
+     * Aplica RN-PROP-01 y exige al menos un producto
+     * activo en Catálogo.
      *
      * Las asociaciones locales se consultan en bloque.
      */
@@ -97,8 +132,7 @@ public class RecetaServiceImpl implements RecetaService {
                                 producto ->
                                         producto.getId().getIdReceta()));
 
-        // Evita consultar repetidamente el mismo producto externo.
-        // La caché existe solamente durante esta operación.
+        // Caché de verificaciones remotas limitada a esta consulta.
         Map<Integer, Boolean> estadoProductos = new HashMap<>();
 
         List<Receta> resultado = new ArrayList<>();
@@ -139,11 +173,99 @@ public class RecetaServiceImpl implements RecetaService {
     }
 
     /**
-     * Comprueba que exista al menos un producto activo
-     * asociado a la receta.
+     * Recupera una receta únicamente si cumple todas
+     * las condiciones de visibilidad pública.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<Receta> obtenerRecetaPublicadaPorId(
+            Integer idReceta) {
+
+        if (idReceta == null || idReceta <= 0) {
+            throw new IllegalArgumentException(
+                    "El identificador de la receta debe ser positivo.");
+        }
+
+        Optional<Receta> recetaEncontrada =
+                recetaRepository.findById(idReceta);
+
+        if (recetaEncontrada.isEmpty()) {
+            return Optional.empty();
+        }
+
+        Receta receta = recetaEncontrada.get();
+
+        if (!receta.isActivo() || !receta.isPublicada()) {
+            return Optional.empty();
+        }
+
+        List<RecetaIngrediente> ingredientes =
+                recetaIngredienteRepository
+                        .findByReceta_IdRecetaOrderByOrdenAsc(idReceta);
+
+        if (!recetaValidator.tieneIngredientesObligatorios(
+                ingredientes)) {
+
+            LOGGER.warn(
+                    "RN-PROP-01: receta publicada ID {} "
+                            + "sin ingredientes obligatorios. "
+                            + "Se excluye del detalle público.",
+                    idReceta);
+
+            return Optional.empty();
+        }
+
+        List<RecetaProducto> productos =
+                recetaProductoRepository
+                        .findByReceta_IdReceta(idReceta);
+
+        if (!tieneProductoActivo(
+                idReceta, productos, new HashMap<>())) {
+            return Optional.empty();
+        }
+
+        return Optional.of(receta);
+    }
+
+    /**
+     * Obtiene el detalle público de una receta,
+     * incluyendo los pasos de preparación ordenados.
      *
-     * Ante errores de Catálogo, no se considera válido
-     * el producto cuya condición no pudo verificarse.
+     * Primero valida que la receta pueda exponerse
+     * públicamente. Solo después consulta sus pasos.
+     *
+     * La consulta y la conversión a DTO se realizan
+     * dentro de la transacción de lectura.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<RecetaDetalleResponse> obtenerDetalleRecetaPublicada(
+            Integer idReceta) {
+
+        Optional<Receta> recetaEncontrada =
+                obtenerRecetaPublicadaPorId(idReceta);
+
+        if (recetaEncontrada.isEmpty()) {
+            return Optional.empty();
+        }
+
+        List<PasoReceta> pasos =
+                pasoRecetaRepository
+                        .findByReceta_IdRecetaOrderByNumeroPasoAsc(idReceta);
+
+        RecetaDetalleResponse detalle =
+                RecetaMapper.toDetalleResponse(
+                        recetaEncontrada.get(), pasos);
+
+        return Optional.of(detalle);
+    }
+
+    /**
+     * Comprueba si la receta tiene al menos un producto
+     * asociado que esté activo en Catálogo.
+     *
+     * Si no puede verificarse el estado de un producto,
+     * este no se considera activo.
      */
     private boolean tieneProductoActivo(
             Integer idReceta,
@@ -209,7 +331,7 @@ public class RecetaServiceImpl implements RecetaService {
     }
 
     /**
-     * Publica una receta únicamente cuando cumple
+     * Publica una receta únicamente después de validar
      * las reglas de negocio correspondientes.
      */
     @Override
@@ -223,7 +345,8 @@ public class RecetaServiceImpl implements RecetaService {
 
         Receta receta = recetaRepository.findById(idReceta)
                 .orElseThrow(() -> new IllegalArgumentException(
-                        "No existe una receta con identificador: " + idReceta));
+                        "No existe una receta con identificador: "
+                                + idReceta));
 
         if (!receta.isActivo()) {
             throw new IllegalStateException(
@@ -234,10 +357,12 @@ public class RecetaServiceImpl implements RecetaService {
                 recetaIngredienteRepository
                         .findByReceta_IdRecetaOrderByOrdenAsc(idReceta);
 
-        recetaValidator.validarIngredientesObligatorios(ingredientes);
+        recetaValidator.validarIngredientesObligatorios(
+                ingredientes);
 
         List<RecetaProducto> productos =
-                recetaProductoRepository.findByReceta_IdReceta(idReceta);
+                recetaProductoRepository
+                        .findByReceta_IdReceta(idReceta);
 
         recetaValidator.validarProductosAsociados(productos);
 
@@ -252,7 +377,8 @@ public class RecetaServiceImpl implements RecetaService {
 
         if (!existeProductoActivo) {
             throw new IllegalStateException(
-                    "La receta debe tener al menos un producto activo en Catálogo.");
+                    "La receta debe tener al menos un producto "
+                            + "activo en Catálogo.");
         }
 
         receta.marcarComoPublicada();

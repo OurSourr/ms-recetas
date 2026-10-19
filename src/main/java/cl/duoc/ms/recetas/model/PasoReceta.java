@@ -11,6 +11,10 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
+/**
+ * Representa una instrucción de preparación
+ * asociada a una receta de coctelería.
+ */
 @Entity
 @Table(
     name = "paso_receta",
@@ -36,7 +40,25 @@ public class PasoReceta {
     @Column(name = "instruccion", nullable = false, columnDefinition = "TEXT")
     private String instruccion;
 
+    /**
+     * Constructor requerido por JPA.
+     */
     protected PasoReceta() {
-        // Constructor requerido por JPA.
+    }
+
+    public Integer getIdPaso() {
+        return idPaso;
+    }
+
+    public Receta getReceta() {
+        return receta;
+    }
+
+    public Integer getNumeroPaso() {
+        return numeroPaso;
+    }
+
+    public String getInstruccion() {
+        return instruccion;
     }
 }

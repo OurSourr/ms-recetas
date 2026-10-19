@@ -1,3 +1,4 @@
+
 package cl.duoc.ms.recetas.model;
 
 import java.time.LocalDateTime;
@@ -12,6 +13,13 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
+/**
+ * Representa un ingrediente disponible en el catálogo
+ * interno del microservicio de recetas.
+ *
+ * Permite identificar ingredientes, clasificarlos
+ * y determinar si están activos.
+ */
 @Entity
 @Table(name = "ingrediente")
 public class Ingrediente {
@@ -40,7 +48,39 @@ public class Ingrediente {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
+    /**
+     * Constructor requerido por JPA.
+     */
     protected Ingrediente() {
-        // Constructor requerido por JPA.
+    }
+
+    // Métodos de lectura
+
+    public Integer getIdIngrediente() {
+        return idIngrediente;
+    }
+
+    public CategoriaIngrediente getCategoria() {
+        return categoria;
+    }
+
+    public String getNombre() {
+        return nombre;
+    }
+
+    public String getDescripcion() {
+        return descripcion;
+    }
+
+    public boolean isActivo() {
+        return activo;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
     }
 }

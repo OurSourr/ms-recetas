@@ -1,3 +1,4 @@
+
 package cl.duoc.ms.recetas.model;
 
 import jakarta.persistence.Column;
@@ -27,5 +28,21 @@ public class CategoriaIngrediente {
 
     protected CategoriaIngrediente() {
         // Constructor requerido por JPA.
+    }
+
+    public Integer getIdCategoria() {
+        return idCategoria;
+    }
+
+    public String getNombre() {
+        return nombre;
+    }
+
+    public String getDescripcion() {
+        return descripcion;
+    }
+
+    public boolean isActivo() {
+        return activo;
     }
 }
