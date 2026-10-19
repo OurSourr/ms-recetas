@@ -1,6 +1,12 @@
+
 package cl.duoc.ms.recetas.service.impl;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,38 +55,157 @@ public class RecetaServiceImpl implements RecetaService {
     }
 
     /**
-     * Excluye recetas publicadas que incumplan RN-PROP-01
-     * y registra las anomalías detectadas.
+     * Recupera recetas publicadas y activas.
+     *
+     * Aplica RN-PROP-01 y exige al menos un producto activo
+     * en Catálogo antes de incluir una receta en la respuesta.
+     *
+     * Las asociaciones locales se consultan en bloque.
      */
     @Override
     @Transactional(readOnly = true)
     public List<Receta> listarRecetasPublicadas() {
 
-        return recetaRepository.findByPublicadaTrueAndActivoTrue()
-                .stream()
-                .filter(this::cumpleReglaIngredientesObligatorios)
-                .toList();
-    }
+        List<Receta> recetas =
+                recetaRepository.findByPublicadaTrueAndActivoTrue();
 
-    private boolean cumpleReglaIngredientesObligatorios(Receta receta) {
+        if (recetas.isEmpty()) {
+            return List.of();
+        }
+
+        List<Integer> idsRecetas = recetas.stream()
+                .map(Receta::getIdReceta)
+                .toList();
 
         List<RecetaIngrediente> ingredientes =
                 recetaIngredienteRepository
-                        .findByReceta_IdRecetaOrderByOrdenAsc(
-                                receta.getIdReceta());
+                        .findByReceta_IdRecetaIn(idsRecetas);
 
-        boolean cumpleRegla =
-                recetaValidator.tieneIngredientesObligatorios(ingredientes);
+        List<RecetaProducto> productos =
+                recetaProductoRepository
+                        .findByReceta_IdRecetaIn(idsRecetas);
 
-        if (!cumpleRegla) {
-            LOGGER.warn(
-                    "RN-PROP-01: receta publicada con ID {} "
-                            + "sin ingredientes obligatorios. "
-                            + "Se excluye de la consulta pública.",
-                    receta.getIdReceta());
+        Map<Integer, List<RecetaIngrediente>> ingredientesPorReceta =
+                ingredientes.stream()
+                        .collect(Collectors.groupingBy(
+                                ingrediente ->
+                                        ingrediente.getId().getIdReceta()));
+
+        Map<Integer, List<RecetaProducto>> productosPorReceta =
+                productos.stream()
+                        .collect(Collectors.groupingBy(
+                                producto ->
+                                        producto.getId().getIdReceta()));
+
+        // Evita consultar repetidamente el mismo producto externo.
+        // La caché existe solamente durante esta operación.
+        Map<Integer, Boolean> estadoProductos = new HashMap<>();
+
+        List<Receta> resultado = new ArrayList<>();
+
+        for (Receta receta : recetas) {
+
+            Integer idReceta = receta.getIdReceta();
+
+            List<RecetaIngrediente> ingredientesReceta =
+                    ingredientesPorReceta.getOrDefault(
+                            idReceta, List.of());
+
+            if (!recetaValidator.tieneIngredientesObligatorios(
+                    ingredientesReceta)) {
+
+                LOGGER.warn(
+                        "RN-PROP-01: receta publicada ID {} "
+                                + "sin ingredientes obligatorios. "
+                                + "Se excluye de la consulta pública.",
+                        idReceta);
+
+                continue;
+            }
+
+            List<RecetaProducto> productosReceta =
+                    productosPorReceta.getOrDefault(
+                            idReceta, List.of());
+
+            if (!tieneProductoActivo(
+                    idReceta, productosReceta, estadoProductos)) {
+                continue;
+            }
+
+            resultado.add(receta);
         }
 
-        return cumpleRegla;
+        return List.copyOf(resultado);
+    }
+
+    /**
+     * Comprueba que exista al menos un producto activo
+     * asociado a la receta.
+     *
+     * Ante errores de Catálogo, no se considera válido
+     * el producto cuya condición no pudo verificarse.
+     */
+    private boolean tieneProductoActivo(
+            Integer idReceta,
+            List<RecetaProducto> productos,
+            Map<Integer, Boolean> estadoProductos) {
+
+        if (productos == null || productos.isEmpty()) {
+
+            LOGGER.warn(
+                    "Receta publicada ID {} sin productos asociados. "
+                            + "Se excluye de la consulta pública.",
+                    idReceta);
+
+            return false;
+        }
+
+        Set<Integer> idsProductos = productos.stream()
+                .filter(producto -> producto != null
+                        && producto.getId() != null)
+                .map(producto ->
+                        producto.getId().getIdProductoExterno())
+                .filter(id -> id != null && id > 0)
+                .collect(Collectors.toSet());
+
+        if (idsProductos.isEmpty()) {
+
+            LOGGER.warn(
+                    "Receta publicada ID {} sin identificadores "
+                            + "de productos válidos.",
+                    idReceta);
+
+            return false;
+        }
+
+        for (Integer idProducto : idsProductos) {
+
+            try {
+                boolean activo = estadoProductos.computeIfAbsent(
+                        idProducto,
+                        catalogoProductoService::existeProductoActivo);
+
+                if (activo) {
+                    return true;
+                }
+
+            } catch (IllegalStateException excepcion) {
+
+                LOGGER.warn(
+                        "No fue posible verificar el producto {} "
+                                + "de la receta {}: {}",
+                        idProducto,
+                        idReceta,
+                        excepcion.getMessage());
+            }
+        }
+
+        LOGGER.warn(
+                "Receta publicada ID {} sin productos activos "
+                        + "verificados. Se excluye de la consulta pública.",
+                idReceta);
+
+        return false;
     }
 
     /**
@@ -116,8 +241,6 @@ public class RecetaServiceImpl implements RecetaService {
 
         recetaValidator.validarProductosAsociados(productos);
 
-        // Catálogo determina si existe al menos un producto activo.
-        // Ante errores de comunicación, la publicación se interrumpe.
         boolean existeProductoActivo = productos.stream()
                 .filter(producto -> producto != null
                         && producto.getId() != null

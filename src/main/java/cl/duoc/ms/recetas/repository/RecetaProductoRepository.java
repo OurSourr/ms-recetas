@@ -1,5 +1,7 @@
+
 package cl.duoc.ms.recetas.repository;
 
+import java.util.Collection;
 import java.util.List;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -18,9 +20,16 @@ public interface RecetaProductoRepository
 
     /**
      * Recupera los productos externos asociados a una receta.
-     *
-     * @param idReceta identificador de la receta
-     * @return asociaciones de productos de la receta
      */
     List<RecetaProducto> findByReceta_IdReceta(Integer idReceta);
+
+    /**
+     * Recupera las asociaciones de varias recetas
+     * mediante una única consulta a la base de datos.
+     *
+     * Evita ejecutar una consulta individual por receta
+     * al construir listados públicos.
+     */
+    List<RecetaProducto> findByReceta_IdRecetaIn(
+            Collection<Integer> idsRecetas);
 }
