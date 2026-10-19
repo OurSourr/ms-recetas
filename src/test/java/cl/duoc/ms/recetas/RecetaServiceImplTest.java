@@ -1,8 +1,8 @@
-
 package cl.duoc.ms.recetas;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
 
 import java.util.List;
@@ -38,7 +38,7 @@ class RecetaServiceImplTest {
         recetaProductoRepository = mock(RecetaProductoRepository.class);
         catalogoProductoService = mock(CatalogoProductoService.class);
 
-        // Se utiliza el validador real para comprobar las reglas de negocio.
+        // Validador real para comprobar las reglas de negocio.
         recetaValidator = new RecetaValidator();
 
         recetaService = new RecetaServiceImpl(
@@ -201,9 +201,101 @@ class RecetaServiceImplTest {
         verify(recetaRepository, never()).save(any());
     }
 
+    @Test
+    void debeListarRecetaConIngredienteObligatorio() {
+        Receta receta = prepararRecetaParaConsulta(1, true);
+
+        List<Receta> resultado = recetaService.listarRecetasPublicadas();
+
+        assertEquals(List.of(receta), resultado);
+        verify(recetaIngredienteRepository)
+                .findByReceta_IdRecetaOrderByOrdenAsc(1);
+        verifyNoInteractions(catalogoProductoService);
+    }
+
+    @Test
+    void debeExcluirRecetaSinIngredientesObligatorios() {
+        prepararRecetaParaConsulta(2, false);
+
+        List<Receta> resultado = recetaService.listarRecetasPublicadas();
+
+        assertTrue(resultado.isEmpty());
+        verify(recetaRepository, never()).save(any());
+    }
+
+    @Test
+    void debeExcluirRecetaSinIngredientes() {
+        Receta receta = mock(Receta.class);
+
+        when(receta.getIdReceta()).thenReturn(3);
+        when(recetaRepository.findByPublicadaTrueAndActivoTrue())
+                .thenReturn(List.of(receta));
+
+        when(recetaIngredienteRepository
+                .findByReceta_IdRecetaOrderByOrdenAsc(3))
+                .thenReturn(List.of());
+
+        List<Receta> resultado = recetaService.listarRecetasPublicadas();
+
+        assertTrue(resultado.isEmpty());
+    }
+
+    @Test
+    void debeConservarSoloRecetasValidasEnConsultaMixta() {
+        Receta valida = mock(Receta.class);
+        Receta invalida = mock(Receta.class);
+
+        RecetaIngrediente obligatorio = mock(RecetaIngrediente.class);
+        RecetaIngrediente opcional = mock(RecetaIngrediente.class);
+
+        when(valida.getIdReceta()).thenReturn(1);
+        when(invalida.getIdReceta()).thenReturn(2);
+
+        when(obligatorio.isObligatorio()).thenReturn(true);
+        when(opcional.isObligatorio()).thenReturn(false);
+
+        when(recetaRepository.findByPublicadaTrueAndActivoTrue())
+                .thenReturn(List.of(valida, invalida));
+
+        when(recetaIngredienteRepository
+                .findByReceta_IdRecetaOrderByOrdenAsc(1))
+                .thenReturn(List.of(obligatorio));
+
+        when(recetaIngredienteRepository
+                .findByReceta_IdRecetaOrderByOrdenAsc(2))
+                .thenReturn(List.of(opcional));
+
+        List<Receta> resultado = recetaService.listarRecetasPublicadas();
+
+        assertEquals(List.of(valida), resultado);
+        verify(recetaRepository, never()).save(any());
+    }
+
     /**
-     * Prepara los datos comunes de las pruebas de publicación.
-     * Evita duplicar la configuración de repositorios y entidades.
+     * Prepara datos comunes para las pruebas de consulta.
+     */
+    private Receta prepararRecetaParaConsulta(
+            Integer idReceta,
+            boolean obligatorio) {
+
+        Receta receta = mock(Receta.class);
+        RecetaIngrediente ingrediente = mock(RecetaIngrediente.class);
+
+        when(receta.getIdReceta()).thenReturn(idReceta);
+        when(ingrediente.isObligatorio()).thenReturn(obligatorio);
+
+        when(recetaRepository.findByPublicadaTrueAndActivoTrue())
+                .thenReturn(List.of(receta));
+
+        when(recetaIngredienteRepository
+                .findByReceta_IdRecetaOrderByOrdenAsc(idReceta))
+                .thenReturn(List.of(ingrediente));
+
+        return receta;
+    }
+
+    /**
+     * Prepara datos comunes para las pruebas de publicación.
      */
     private void prepararRecetaValidaConProducto(
             Integer idReceta,

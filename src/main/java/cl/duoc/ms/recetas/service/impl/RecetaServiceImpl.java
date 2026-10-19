@@ -1,8 +1,9 @@
-
 package cl.duoc.ms.recetas.service.impl;
 
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,6 +23,9 @@ import cl.duoc.ms.recetas.service.RecetaValidator;
  */
 @Service
 public class RecetaServiceImpl implements RecetaService {
+
+    private static final Logger LOGGER =
+            LoggerFactory.getLogger(RecetaServiceImpl.class);
 
     private final RecetaRepository recetaRepository;
     private final RecetaIngredienteRepository recetaIngredienteRepository;
@@ -44,10 +48,39 @@ public class RecetaServiceImpl implements RecetaService {
         this.catalogoProductoService = catalogoProductoService;
     }
 
+    /**
+     * Excluye recetas publicadas que incumplan RN-PROP-01
+     * y registra las anomalías detectadas.
+     */
     @Override
     @Transactional(readOnly = true)
     public List<Receta> listarRecetasPublicadas() {
-        return recetaRepository.findByPublicadaTrueAndActivoTrue();
+
+        return recetaRepository.findByPublicadaTrueAndActivoTrue()
+                .stream()
+                .filter(this::cumpleReglaIngredientesObligatorios)
+                .toList();
+    }
+
+    private boolean cumpleReglaIngredientesObligatorios(Receta receta) {
+
+        List<RecetaIngrediente> ingredientes =
+                recetaIngredienteRepository
+                        .findByReceta_IdRecetaOrderByOrdenAsc(
+                                receta.getIdReceta());
+
+        boolean cumpleRegla =
+                recetaValidator.tieneIngredientesObligatorios(ingredientes);
+
+        if (!cumpleRegla) {
+            LOGGER.warn(
+                    "RN-PROP-01: receta publicada con ID {} "
+                            + "sin ingredientes obligatorios. "
+                            + "Se excluye de la consulta pública.",
+                    receta.getIdReceta());
+        }
+
+        return cumpleRegla;
     }
 
     /**
@@ -76,24 +109,23 @@ public class RecetaServiceImpl implements RecetaService {
                 recetaIngredienteRepository
                         .findByReceta_IdRecetaOrderByOrdenAsc(idReceta);
 
-        // RN-PROP-01: exige al menos un ingrediente obligatorio.
         recetaValidator.validarIngredientesObligatorios(ingredientes);
 
         List<RecetaProducto> productos =
                 recetaProductoRepository.findByReceta_IdReceta(idReceta);
 
-        // Exige al menos una asociación válida con Catálogo.
         recetaValidator.validarProductosAsociados(productos);
 
-        // Catálogo es responsable de determinar si un producto está activo.
-        // Si Catálogo falla, la excepción impide publicar la receta.
+        // Catálogo determina si existe al menos un producto activo.
+        // Ante errores de comunicación, la publicación se interrumpe.
         boolean existeProductoActivo = productos.stream()
                 .filter(producto -> producto != null
                         && producto.getId() != null
                         && producto.getId().getIdProductoExterno() != null
                         && producto.getId().getIdProductoExterno() > 0)
-                .anyMatch(producto -> catalogoProductoService.existeProductoActivo(
-                        producto.getId().getIdProductoExterno()));
+                .anyMatch(producto ->
+                        catalogoProductoService.existeProductoActivo(
+                                producto.getId().getIdProductoExterno()));
 
         if (!existeProductoActivo) {
             throw new IllegalStateException(

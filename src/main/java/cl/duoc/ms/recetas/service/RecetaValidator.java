@@ -15,6 +15,19 @@ import cl.duoc.ms.recetas.model.RecetaProducto;
 public class RecetaValidator {
 
     /**
+     * Comprueba RN-PROP-01 sin lanzar excepciones.
+     * Puede reutilizarse al consultar recetas publicadas.
+     */
+    public boolean tieneIngredientesObligatorios(
+            List<RecetaIngrediente> ingredientes) {
+
+        return ingredientes != null
+                && ingredientes.stream()
+                        .filter(Objects::nonNull)
+                        .anyMatch(RecetaIngrediente::isObligatorio);
+    }
+
+    /**
      * RN-PROP-01:
      * Toda receta publicada debe tener al menos
      * un ingrediente obligatorio.
@@ -27,11 +40,7 @@ public class RecetaValidator {
                     "La lista de ingredientes no puede ser nula.");
         }
 
-        boolean tieneObligatorio = ingredientes.stream()
-                .filter(Objects::nonNull)
-                .anyMatch(RecetaIngrediente::isObligatorio);
-
-        if (!tieneObligatorio) {
+        if (!tieneIngredientesObligatorios(ingredientes)) {
             throw new IllegalStateException(
                     "Una receta publicada debe tener al menos un ingrediente obligatorio.");
         }
